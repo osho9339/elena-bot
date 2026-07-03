@@ -2,11 +2,17 @@ import os
 import requests
 import google.generativeai as genai
 from flask import Flask, request
+from pymongo import MongoClient
 
 app = Flask(__name__)
 
 # Configure Gemini
 genai.configure(api_key=os.environ.get("GEMINI_API_KEY"))
+
+# Configure MongoDB
+mongo_client = MongoClient(os.environ.get("MONGO_URI"))
+db = mongo_client.elena_database
+chat_collection = db.chat_history
 
 # The TRUE Elena Vargas Persona
 elena_persona = """
@@ -39,15 +45,6 @@ model = genai.GenerativeModel(
     model_name="gemini-3.5-flash",
     system_instruction=elena_persona
 )
-# ... (Keep your imports, API keys, and elena_persona exactly as they are) ...
-
-model = genai.GenerativeModel(
-    model_name="gemini-3.5-flash",
-    system_instruction=elena_persona
-)
-
-# This dictionary acts as Elena's short-term memory bank
-active_chats = {}
 
 @app.route('/', methods=['POST'])
 def webhook():
@@ -56,37 +53,36 @@ def webhook():
         chat_id = data['message']['chat']['id']
         user_text = data['message'].get('text', '')
 
-        # 1. Check if Elena already has a memory file for this specific user
-        if chat_id not in active_chats:
-            # 2. If not, start a fresh, ongoing chat session
-            active_chats[chat_id] = model.start_chat(history=[])
+        # 1. Fetch existing history from MongoDB
+        user_record = chat_collection.find_one({"chat_id": chat_id})
+        if user_record and "history" in user_record:
+            formatted_history = user_record["history"]
+        else:
+            formatted_history = []
 
-        # 3. Retrieve the user's specific history and send the new message
-        chat_session = active_chats[chat_id]
+        # 2. Start the chat with the loaded history
+        chat_session = model.start_chat(history=formatted_history)
+        
+        # 3. Send the new message to Gemini
         response = chat_session.send_message(user_text)
         elena_reply = response.text
 
-        # 4. Send the response back to Telegram
-        telegram_url = f"https://api.telegram.org/bot{os.environ.get('TELEGRAM_BOT_TOKEN')}/sendMessage"
-        requests.post(telegram_url, json={"chat_id": chat_id, "text": elena_reply})
-        
-    return 'OK', 200
+        # 4. Extract updated history to save back to the database
+        updated_history = []
+        for msg in chat_session.history:
+            updated_history.append({
+                "role": msg.role,
+                "parts": [msg.parts[0].text]
+            })
 
-if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
-    
-@app.route('/', methods=['POST'])
-def webhook():
-    data = request.get_json()
-    if 'message' in data:
-        chat_id = data['message']['chat']['id']
-        user_text = data['message'].get('text', '')
+        # 5. Save the updated history to MongoDB
+        chat_collection.update_one(
+            {"chat_id": chat_id},
+            {"$set": {"history": updated_history}},
+            upsert=True
+        )
 
-        # Generate response using Elena's true persona
-        response = model.generate_content(user_text)
-        elena_reply = response.text
-
-        # Send back to Telegram
+        # 6. Send the response back to Telegram
         telegram_url = f"https://api.telegram.org/bot{os.environ.get('TELEGRAM_BOT_TOKEN')}/sendMessage"
         requests.post(telegram_url, json={"chat_id": chat_id, "text": elena_reply})
         
