@@ -60,96 +60,40 @@ def process_message(message):
 
     # 2. Get Elena's Reply
     try:
-        # We'll use the default model call to ensure compatibility
         response = model.generate_content(history)
         elena_reply = response.text
-        print(f"Elena's raw reply: {elena_reply}") # This will show up in your logs!
     except Exception as e:
-        print(f"CRITICAL ERROR: {e}")
+        print(f"DEBUG ERROR: {e}")
         bot.reply_to(message, "I'm having a bit of trouble focusing, give me a second.")
         return
 
     # 3. Check for the Secret Image Trigger
-    image_match = re.search(r'\[IMAGE:\s*(.*?)\]', elena_reply, re.IGNORECASE)
+    image_match = re.search(r'\[IMAGE:\s*(.*?)\]', elena_reply, re.IGNORECASE | re.DOTALL)
     
     if image_match:
-        visual_prompt = image_match.group(1)
-        print(f"Found visual prompt: {visual_prompt}")
-        
-        clean_reply = re.sub(r'\[IMAGE:\s*(.*?)\]', '', elena_reply, flags=re.IGNORECASE).strip()
+        visual_prompt = image_match.group(1).strip()
+        clean_reply = re.sub(r'\[IMAGE:\s*(.*?)\]', '', elena_reply, flags=re.IGNORECASE | re.DOTALL).strip()
         
         if clean_reply:
             bot.send_message(message.chat.id, clean_reply)
         
         bot.send_chat_action(message.chat.id, 'upload_photo')
-        
         image_bytes = generate_image(visual_prompt)
         
         if image_bytes:
             photo = io.BytesIO(image_bytes)
             photo.name = 'selfie.png'
-            bot.send_photo(chat_id=message.chat.id, photo=photo)
+            bot.send_photo(message.chat.id, photo)
         else:
-            bot.send_message(message.chat.id, "I couldn't quite capture the moment, let's try again.")
+            bot.send_message(message.chat.id, "I wanted to show you something, but the camera is acting up, guapo.")
             
-        elena_reply = clean_reply
+        final_reply = clean_reply
     else:
         bot.send_message(message.chat.id, elena_reply)
+        final_reply = elena_reply
 
     # 4. Save to Database
-    history.append({"role": "model", "parts": [elena_reply]})
-    chat_history.update_one({"_id": user_id}, {"$set": {"messages": history}}, upsert=True)
-
-    # 2. Get Elena's Reply (With safety filters disabled)
-    try:
-        response = model.generate_content(
-            history,
-            safety_settings=[
-                {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
-                {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
-                {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
-                {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"},
-            ]
-        )
-        elena_reply = response.text
-    except Exception as e:
-        print(f"Gemini Error: {e}") # This will log the exact issue in Render!
-        bot.reply_to(message, "Give me a moment, cariño. My signal is a bit weak right now.")
-        return
-
-    # 3. Check for the Secret Image Trigger
-    image_match = re.search(r'\[IMAGE:\s*(.*?)\]', elena_reply, re.IGNORECASE)
-    
-    if image_match:
-        visual_prompt = image_match.group(1)
-        
-        # Remove the bracketed secret code so the user doesn't see it
-        clean_reply = re.sub(r'\[IMAGE:\s*(.*?)\]', '', elena_reply, flags=re.IGNORECASE).strip()
-        
-        # Send her text first
-        if clean_reply:
-            bot.send_message(message.chat.id, clean_reply)
-        
-        # Show "uploading photo..." status in Telegram
-        bot.send_chat_action(message.chat.id, 'upload_photo')
-        
-        # Generate the photo via Hugging Face
-        image_bytes = generate_image(visual_prompt)
-        
-        if image_bytes:
-            photo = io.BytesIO(image_bytes)
-            photo.name = 'selfie.png'
-            bot.send_photo(chat_id=message.chat.id, photo=photo)
-        else:
-            bot.send_message(message.chat.id, "*Sigh* The lighting in here is terrible right now, maybe later guapo.")
-            
-        elena_reply = clean_reply
-    else:
-        # Normal text response
-        bot.send_message(message.chat.id, elena_reply)
-
-    # 4. Save to Database
-    history.append({"role": "model", "parts": [elena_reply]})
+    history.append({"role": "model", "parts": [final_reply]})
     chat_history.update_one({"_id": user_id}, {"$set": {"messages": history}}, upsert=True)
 
 # --- 4. SERVER BOOTUP ---
