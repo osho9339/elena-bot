@@ -9,7 +9,6 @@ from pymongo import MongoClient
 from flask import Flask
 
 # --- 1. ENVIRONMENT VARIABLES ---
-# Updated to match your exact Render variable name!
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 GENAI_API_KEY = os.environ.get("GENAI_API_KEY")
 MONGO_URI = os.environ.get("MONGO_URI")
@@ -59,11 +58,20 @@ def process_message(message):
 
     history.append({"role": "user", "parts": [user_text]})
 
-    # 2. Get Elena's Reply
+    # 2. Get Elena's Reply (With safety filters disabled)
     try:
-        response = model.generate_content(history)
+        response = model.generate_content(
+            history,
+            safety_settings=[
+                {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
+                {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
+                {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
+                {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"},
+            ]
+        )
         elena_reply = response.text
     except Exception as e:
+        print(f"Gemini Error: {e}") # This will log the exact issue in Render!
         bot.reply_to(message, "Give me a moment, cariño. My signal is a bit weak right now.")
         return
 
@@ -107,14 +115,8 @@ def process_message(message):
 def keep_alive():
     return "Elena's Brain and Visual Cortex are online!"
 
-# Clear any stuck webhooks from Telegram's servers
 bot.remove_webhook()
-
-# Start the bot listening in a background thread
 threading.Thread(target=bot.infinity_polling, kwargs={'skip_pending': True}).start()
-
-if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
