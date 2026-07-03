@@ -160,14 +160,9 @@ def keep_alive():
 if __name__ == "__main__":
     # Clear any stuck webhooks
     bot.remove_webhook()
-    # Before starting the bot, remove any active webhooks to prevent 409 conflicts
-bot.remove_webhook()
-
-# Now start polling
-bot.infinity_polling(skip_pending=True)
     
     # Start the bot listening in a background thread
     threading.Thread(target=bot.infinity_polling, kwargs={'skip_pending': True}).start()
     
-    # Start the Flask web server to satisfy Render's port requirements
+    # Start the Flask web server
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
