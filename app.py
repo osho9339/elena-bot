@@ -9,6 +9,7 @@ bot = telebot.TeleBot(os.environ.get("TELEGRAM_BOT_TOKEN"))
 def webhook():
     json_string = request.get_data().decode('utf-8')
     update = telebot.types.Update.de_json(json_string)
+    print(f"DEBUG: Processing update: {update}") # Add this line
     bot.process_new_updates([update])
     return 'OK', 200
 
