@@ -111,3 +111,17 @@ if __name__ == "__main__":
     threading.Thread(target=bot.infinity_polling, kwargs={'skip_pending': True}).start()
     # Start the Flask web server to satisfy Render's port requirements
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
+    # --- 4. SERVER BOOTUP ---
+@app.route('/')
+def keep_alive():
+    return "Elena's Brain and Visual Cortex are online!"
+
+# WE REMOVED THE "if __name__ == '__main__':" CHECK HERE
+# This forces Gunicorn to run these lines immediately on startup:
+
+# Start the bot listening in a background thread
+threading.Thread(target=bot.infinity_polling, kwargs={'skip_pending': True}).start()
+
+# Render will automatically pass the PORT variable, Gunicorn handles the web serving
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
