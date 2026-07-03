@@ -1,6 +1,5 @@
-flask
-telebot
+pyTelegramBotAPI
 google-generativeai
+pymongo [srv]
+flask
 requests
-gunicorn
-pymongo[srv]
