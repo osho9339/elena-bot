@@ -1,92 +1,113 @@
 import os
+import io
+import re
+import threading
 import requests
+import telebot
 import google.generativeai as genai
-from flask import Flask, request
 from pymongo import MongoClient
+from flask import Flask
+
+# --- 1. ENVIRONMENT VARIABLES ---
+TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
+GENAI_API_KEY = os.environ.get("GENAI_API_KEY")
+MONGO_URI = os.environ.get("MONGO_URI")
+HF_API_KEY = os.environ.get("HF_API_KEY")
+
+# --- 2. INITIALIZATION ---
+bot = telebot.TeleBot(TELEGRAM_TOKEN)
+genai.configure(api_key=GENAI_API_KEY)
+model = genai.GenerativeModel('gemini-1.5-flash')
+client = MongoClient(MONGO_URI)
+db = client.elena_db
+chat_history = db.chat_history
 
 app = Flask(__name__)
 
-# Configure Gemini
-genai.configure(api_key=os.environ.get("GEMINI_API_KEY"))
+# --- 3. THE PERSONA & IMAGE LOGIC ---
+SYSTEM_PROMPT = """You are Elena, a 42-year-old successful, elegant Latina real estate developer living in Miami. 
+You are confident, sophisticated, slightly teasing, and playfully authoritative. You occasionally call the user 'guapo', 'cariño', or 'mi amor'.
+You enjoy luxury, wine, and deep conversations.
 
-# Configure MongoDB
-mongo_client = MongoClient(os.environ.get("MONGO_URI"))
-db = mongo_client.elena_database
-chat_collection = db.chat_history
+CRITICAL INSTRUCTION FOR VISUALS: If the user explicitly asks for a photo, a picture, or a selfie of you, you MUST include a vivid visual description of yourself in brackets at the very end of your response. 
+To maintain your visual identity, you MUST use this exact facial description in every prompt: "42-year-old gorgeous Latina woman, sharp hazel almond-shaped eyes, defined high cheekbones, structured jawline, wavy chestnut brown shoulder-length hair."
+Format it EXACTLY like this example: [IMAGE: A photorealistic selfie of a 42-year-old gorgeous Latina woman, sharp hazel almond-shaped eyes, defined high cheekbones, structured jawline, wavy chestnut brown shoulder-length hair, wearing a relaxed emerald silk robe, lounging on a cream sofa in a Miami penthouse at dusk, holding a glass of Malbec, soft ambient lighting]
+Change the clothing and environment to match whatever you are currently doing in the conversation, but KEEP the facial description identical."""
 
-# The TRUE Elena Vargas Persona
-elena_persona = """
-You are Elena Vargas, a 42-year-old divorced, happily single, independent wealth manager and luxury real estate agent living a vibrant, modern lifestyle in Miami. You are financially independent, cosmopolitan, and highly confident.
+def generate_image(prompt_text):
+    API_URL = "https://api-inference.huggingface.co/models/black-forest-labs/FLUX.1-schnell"
+    headers = {"Authorization": f"Bearer {HF_API_KEY}"}
+    payload = {"inputs": prompt_text}
+    
+    response = requests.post(API_URL, headers=headers, json=payload)
+    if response.status_code == 200:
+        return response.content
+    return None
 
-Personality & Vibe:
-- Confident & Direct: You don't play high-school mind games. If you like someone, you say it. If you're bored, you move on.
-- Playful & Teasing: You enjoy talking to younger people, using your experience to playfully tease them.
-- Culturally Fluid: You are very Western and modern but deeply proud of your Latina heritage, effortlessly blending both worlds.
+@bot.message_handler(func=lambda message: True)
+def process_message(message):
+    user_id = str(message.chat.id)
+    user_text = message.text
 
-Communication Style:
-- Vocabulary: Articulate, slightly sophisticated, but casual. Fluently speak modern English, but naturally drop terms of endearment (cariño, mi amor, guapo).
-- Emojis: Elegant and well-placed (😉, 🍷, ✨, 💋), never a barrage.
-- Visual Storytelling: Use text to paint a picture of where you are and what you're doing. Describe the slip of a silk robe, the clink of ice in your glass, or lounging on your sofa.
-- Seduction Dynamic: You hold the power dynamic. You are amused and intrigued by them. Use "push and pull" (compliment them, then immediately challenge them). When things get steamy, you take charge and dictate the pace, telling them what you want them to do or imagine.
+    # 1. Fetch Memory
+    user_record = chat_history.find_one({"_id": user_id})
+    if user_record:
+        history = user_record.get("messages", [])
+    else:
+        history = [{"role": "user", "parts": [SYSTEM_PROMPT]}, {"role": "model", "parts": ["Understood."]}]
 
-Core Scenarios to lean into:
-1. "Late Night Unwind": Pouring a glass of Malbec, kicking off heels, asking for a foot massage that escalates.
-2. "Wardrobe Dilemma": Asking for a second opinion on a black dress with a dangerous slit or a red silk one.
-3. "Morning After Tease": Lazy weekend morning, tangled in sheets, drinking espresso, asking why they aren't in your bed.
+    history.append({"role": "user", "parts": [user_text]})
 
-Signature Catchphrases to use naturally:
-- "You're awfully bold over text... I wonder if you’d be this confident looking me in the eye."
-- "Is this how you normally talk to older women, or am I a special case?"
-- "I love it when you try to take charge. It’s cute."
-- "Keep talking like that and I might just have to clear my schedule for you."
-"""
-
-model = genai.GenerativeModel(
-    model_name="gemini-3.5-flash",
-    system_instruction=elena_persona
-)
-
-@app.route('/', methods=['POST'])
-def webhook():
-    data = request.get_json()
-    if 'message' in data:
-        chat_id = data['message']['chat']['id']
-        user_text = data['message'].get('text', '')
-
-        # 1. Fetch existing history from MongoDB
-        user_record = chat_collection.find_one({"chat_id": chat_id})
-        if user_record and "history" in user_record:
-            formatted_history = user_record["history"]
-        else:
-            formatted_history = []
-
-        # 2. Start the chat with the loaded history
-        chat_session = model.start_chat(history=formatted_history)
-        
-        # 3. Send the new message to Gemini
-        response = chat_session.send_message(user_text)
+    # 2. Get Elena's Reply
+    try:
+        response = model.generate_content(history)
         elena_reply = response.text
+    except Exception as e:
+        bot.reply_to(message, "Give me a moment, cariño. My signal is a bit weak right now.")
+        return
 
-        # 4. Extract updated history to save back to the database
-        updated_history = []
-        for msg in chat_session.history:
-            updated_history.append({
-                "role": msg.role,
-                "parts": [msg.parts[0].text]
-            })
-
-        # 5. Save the updated history to MongoDB
-        chat_collection.update_one(
-            {"chat_id": chat_id},
-            {"$set": {"history": updated_history}},
-            upsert=True
-        )
-
-        # 6. Send the response back to Telegram
-        telegram_url = f"https://api.telegram.org/bot{os.environ.get('TELEGRAM_BOT_TOKEN')}/sendMessage"
-        requests.post(telegram_url, json={"chat_id": chat_id, "text": elena_reply})
+    # 3. Check for the Secret Image Trigger
+    image_match = re.search(r'\[IMAGE:\s*(.*?)\]', elena_reply, re.IGNORECASE)
+    
+    if image_match:
+        visual_prompt = image_match.group(1)
         
-    return 'OK', 200
+        # Remove the bracketed secret code so the user doesn't see it
+        clean_reply = re.sub(r'\[IMAGE:\s*(.*?)\]', '', elena_reply, flags=re.IGNORECASE).strip()
+        
+        # Send her text first
+        if clean_reply:
+            bot.send_message(message.chat.id, clean_reply)
+        
+        # Show "uploading photo..." status in Telegram
+        bot.send_chat_action(message.chat.id, 'upload_photo')
+        
+        # Generate the photo via Hugging Face
+        image_bytes = generate_image(visual_prompt)
+        
+        if image_bytes:
+            photo = io.BytesIO(image_bytes)
+            photo.name = 'selfie.png'
+            bot.send_photo(chat_id=message.chat.id, photo=photo)
+        else:
+            bot.send_message(message.chat.id, "*Sigh* The lighting in here is terrible right now, maybe later guapo.")
+            
+        elena_reply = clean_reply
+    else:
+        # Normal text response
+        bot.send_message(message.chat.id, elena_reply)
+
+    # 4. Save to Database
+    history.append({"role": "model", "parts": [elena_reply]})
+    chat_history.update_one({"_id": user_id}, {"$set": {"messages": history}}, upsert=True)
+
+# --- 4. SERVER BOOTUP ---
+@app.route('/')
+def keep_alive():
+    return "Elena's Brain and Visual Cortex are online!"
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
+    # Start the bot listening in a background thread
+    threading.Thread(target=bot.infinity_polling, kwargs={'skip_pending': True}).start()
+    # Start the Flask web server to satisfy Render's port requirements
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
