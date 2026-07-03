@@ -58,6 +58,48 @@ def process_message(message):
 
     history.append({"role": "user", "parts": [user_text]})
 
+    # 2. Get Elena's Reply
+    try:
+        # We'll use the default model call to ensure compatibility
+        response = model.generate_content(history)
+        elena_reply = response.text
+        print(f"Elena's raw reply: {elena_reply}") # This will show up in your logs!
+    except Exception as e:
+        print(f"CRITICAL ERROR: {e}")
+        bot.reply_to(message, "I'm having a bit of trouble focusing, give me a second.")
+        return
+
+    # 3. Check for the Secret Image Trigger
+    image_match = re.search(r'\[IMAGE:\s*(.*?)\]', elena_reply, re.IGNORECASE)
+    
+    if image_match:
+        visual_prompt = image_match.group(1)
+        print(f"Found visual prompt: {visual_prompt}")
+        
+        clean_reply = re.sub(r'\[IMAGE:\s*(.*?)\]', '', elena_reply, flags=re.IGNORECASE).strip()
+        
+        if clean_reply:
+            bot.send_message(message.chat.id, clean_reply)
+        
+        bot.send_chat_action(message.chat.id, 'upload_photo')
+        
+        image_bytes = generate_image(visual_prompt)
+        
+        if image_bytes:
+            photo = io.BytesIO(image_bytes)
+            photo.name = 'selfie.png'
+            bot.send_photo(chat_id=message.chat.id, photo=photo)
+        else:
+            bot.send_message(message.chat.id, "I couldn't quite capture the moment, let's try again.")
+            
+        elena_reply = clean_reply
+    else:
+        bot.send_message(message.chat.id, elena_reply)
+
+    # 4. Save to Database
+    history.append({"role": "model", "parts": [elena_reply]})
+    chat_history.update_one({"_id": user_id}, {"$set": {"messages": history}}, upsert=True)
+
     # 2. Get Elena's Reply (With safety filters disabled)
     try:
         response = model.generate_content(
