@@ -107,8 +107,14 @@ def process_message(message):
 def keep_alive():
     return "Elena's Brain and Visual Cortex are online!"
 
+# Clear any stuck webhooks from Telegram's servers
+bot.remove_webhook()
+
 # Start the bot listening in a background thread
 threading.Thread(target=bot.infinity_polling, kwargs={'skip_pending': True}).start()
+
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
