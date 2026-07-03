@@ -39,7 +39,42 @@ model = genai.GenerativeModel(
     model_name="gemini-3.5-flash",
     system_instruction=elena_persona
 )
+# ... (Keep your imports, API keys, and elena_persona exactly as they are) ...
 
+model = genai.GenerativeModel(
+    model_name="gemini-3.5-flash",
+    system_instruction=elena_persona
+)
+
+# This dictionary acts as Elena's short-term memory bank
+active_chats = {}
+
+@app.route('/', methods=['POST'])
+def webhook():
+    data = request.get_json()
+    if 'message' in data:
+        chat_id = data['message']['chat']['id']
+        user_text = data['message'].get('text', '')
+
+        # 1. Check if Elena already has a memory file for this specific user
+        if chat_id not in active_chats:
+            # 2. If not, start a fresh, ongoing chat session
+            active_chats[chat_id] = model.start_chat(history=[])
+
+        # 3. Retrieve the user's specific history and send the new message
+        chat_session = active_chats[chat_id]
+        response = chat_session.send_message(user_text)
+        elena_reply = response.text
+
+        # 4. Send the response back to Telegram
+        telegram_url = f"https://api.telegram.org/bot{os.environ.get('TELEGRAM_BOT_TOKEN')}/sendMessage"
+        requests.post(telegram_url, json={"chat_id": chat_id, "text": elena_reply})
+        
+    return 'OK', 200
+
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
+    
 @app.route('/', methods=['POST'])
 def webhook():
     data = request.get_json()
