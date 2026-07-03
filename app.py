@@ -18,3 +18,7 @@ def echo_all(message):
 
 if __name__ == "__main__":
     app.run()
+@bot.message_handler(func=lambda message: True)
+def echo_all(message):
+    print("DEBUG: Inside echo_all function") # Add this line
+    bot.reply_to(message, "I received your message!")
