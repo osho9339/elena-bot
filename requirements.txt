@@ -2,3 +2,4 @@ flask
 telebot
 google-generativeai
 requests
+gunicorn
